@@ -1,9 +1,8 @@
 name: Release Posterizarr
 
 on:
-  push:
-    tags:
-      - '*.*.*' # Trigger on version tags like 1.0.0
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
