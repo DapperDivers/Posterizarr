@@ -24,6 +24,10 @@ services:
     container_name: "tautulli-dev"
     image: "tautulli/tautulli"
     restart: "unless-stopped"
+    entrypoint: 
+      - "bin/sh -c"
+    command:
+      - "while true; do sleep 30; done"
     ports:
       - 8181:8181
     env_file:
@@ -39,9 +43,25 @@ services:
     image: kometateam/kometa:nightly
     restart: no
     command:
-      --run --overlays-only
+      "--libraries 'Movies' --run"
+      #"--libraries "Movies|TV Shows|4k-Movies|4k-TV Shows" #optional
+      #--run
     env_file:
       - .env.dev
     volumes:
-      - "./config/kometa:/config:rw"
+      - "~/projects/kometa-config:/config:rw"
       - "./config/assets:/assets:rw"
+  overlay-reset:
+    image: kometateam/overlay-reset
+    container_name: overlay-reset
+    restart: no
+    #command: --library Movies
+    #command: --library "TV Shows"
+    #command: --library 4k-Movies
+    #command: --library "4k-TV Shows"
+    env_file:
+      - .env.dev
+    environment:
+      - TZ=TIMEZONE #optional
+    volumes:
+      - "./config/imagemaid:/config:rw"
