@@ -5,9 +5,8 @@ ARG VENDOR
 ARG VERSION
 
 ENV UMASK="0002" \
-    TZ="Europe/Berlin" \
+    TZ="America/Chicago" \
     POWERSHELL_DISTRIBUTION_CHANNEL="PSDocker" \
-    FONTS_GID=5555 \
     POSTERIZARR_NON_ROOT="TRUE" \
     APP_ROOT="/app" \
     APP_DATA="/config" \
@@ -46,6 +45,6 @@ VOLUME ["/config"]
 # Run Start.ps1 directly with parameter passing
 ENTRYPOINT ["/usr/bin/catatonit", "--", "pwsh", "-NoProfile", "/app/Start.ps1"]
 
-LABEL org.opencontainers.image.source="https://github.com/fscorrupt/Posterizarr"
-LABEL org.opencontainers.image.description="Posterizarr - Automated poster generation for Plex/Jellyfin/Emby media libraries"
+LABEL org.opencontainers.image.source="https://github.com/dapperdivers/posterizarr"
+LABEL org.opencontainers.image.description="Forked-Posterizarr - Automated poster generation for Plex/Jellyfin/Emby media libraries"
 LABEL org.opencontainers.image.licenses="GPL-3.0"
