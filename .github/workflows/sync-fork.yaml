@@ -13,11 +13,13 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    outputs:
+      changes_synced: ${{ steps.check_changes.outputs.synced }}
     steps:
     - name: Checkout your forked repository
       uses: actions/checkout@v4
       with:
-        repository: https://github.com/dapperdivers/posterizarr
+        repository: dapperdivers/posterizarr
         token: ${{ secrets.GITHUB_TOKEN }}
         fetch-depth: 0
 
@@ -26,13 +28,95 @@ jobs:
         git remote add upstream https://github.com/fscorrupt/Posterizarr
         git fetch upstream
 
-    - name: Sync with upstream/main
+    - name: Get initial commit hash
+      id: initial_hash
+      run: echo "hash=$(git rev-parse origin/main)" >> $GITHUB_OUTPUT
+
+    - name: Sync with upstream/main and get final hash
+      id: sync_and_hash
       run: |
         git fetch upstream main
         git checkout -B main origin/main
+        # Store hash before rebase/push
+        before_hash=$(git rev-parse HEAD)
+        echo "Hash before sync: $before_hash"
+        
+        # Perform sync
         git rebase upstream/main
-        git push origin main
+        git push origin main --force-with-lease # Safer push
+        
+        # Get hash after push
+        after_hash=$(git rev-parse main)
+        echo "Hash after sync: $after_hash"
+        echo "hash=$after_hash" >> $GITHUB_OUTPUT
+        
+        # Compare hashes for change detection (will be done in next step)
+        if [[ "$before_hash" == "$after_hash" ]]; then
+          echo "No changes detected based on HEAD before/after sync."
+        else
+          echo "Changes detected based on HEAD before/after sync."
+        fi
+        
+    - name: Check if changes were synced
+      id: check_changes
+      run: |
+        initial_commit="${{ steps.initial_hash.outputs.hash }}"
+        final_commit="${{ steps.sync_and_hash.outputs.hash }}"
+        echo "Initial commit: $initial_commit"
+        echo "Final commit: $final_commit"
+        if [[ "$initial_commit" == "$final_commit" ]]; then
+          echo "No new commits synced from upstream."
+          echo "synced=false" >> $GITHUB_OUTPUT
+        else
+          echo "New commits synced from upstream."
+          echo "synced=true" >> $GITHUB_OUTPUT
+        fi
 
     - name: Clean up
       run: |
         git remote remove upstream
+
+  trigger_release:
+    needs: sync
+    runs-on: ubuntu-latest
+    if: needs.sync.outputs.changes_synced == 'true'
+    permissions:
+      contents: read # Needed for checkout
+      actions: write # Needed for workflow_dispatch
+    steps:
+    - name: Checkout repository for tagging
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Required to fetch all history/tags
+
+    - name: Calculate next minor version and Trigger Release
+      id: version_and_trigger
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Fetch all tags to ensure we have the latest
+        git fetch --tags origin
+        
+        # Get latest tag, default if none found
+        latest_tag=$(git describe --tags --abbrev=0 2>/dev/null)
+        if [[ -z "$latest_tag" ]]; then
+          echo "No tags found. Assuming first version v0.1.0"
+          new_version="v0.1.0"
+        else
+          echo "Latest tag: $latest_tag"
+          # Check if tag matches SemVer pattern vX.Y.Z or X.Y.Z
+          if [[ "$latest_tag" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+             major=${BASH_REMATCH[1]}
+             minor=${BASH_REMATCH[2]}
+             patch=${BASH_REMATCH[3]}
+             new_minor=$((minor + 1))
+             new_version="v${major}.${new_minor}.0"
+          else
+             echo "Warning: Latest tag '$latest_tag' does not match SemVer pattern vX.Y.Z. Using v0.1.0 as next version."
+             new_version="v0.1.0"
+          fi
+        fi
+
+        echo "Calculated next version: $new_version"
+        echo "Triggering release workflow with version $new_version"
+        gh workflow run release.yaml --ref main -f version=$new_version
