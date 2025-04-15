@@ -15,7 +15,7 @@ param (
 )
 Set-PSReadLineOption -HistorySaveStyle SaveNothing
 
-$CurrentScriptVersion = "1.9.50"
+$CurrentScriptVersion = "1.9.57"
 $global:HeaderWritten = $false
 $ProgressPreference = 'SilentlyContinue'
 $env:PSMODULE_ANALYSIS_CACHE_PATH = $null
@@ -39,7 +39,12 @@ function Reset-PlexLibraryPictures {
 
     # Fetch the sections of the Plex library
     try {
-        $sections = Invoke-RestMethod -Uri "$PlexUrl/library/sections?X-Plex-Token=$PlexToken"
+        if ($PlexToken) {
+            $sections = Invoke-RestMethod -Uri "$PlexUrl/library/sections?X-Plex-Token=$PlexToken"
+        }
+        Else {
+            $sections = Invoke-RestMethod -Uri "$PlexUrl/library/sections"
+        }
     }
     catch {
         Write-Entry -Subtext "Error fetching sections: $_" -Path "$global:ScriptRoot\Logs\Scriptlog.log" -Color Red -log Error
@@ -6433,7 +6438,20 @@ $folderPattern = "Logs_*"
 $global:RotationFolderName = $null
 $global:logLevel = 2
 RotateLogs -ScriptRoot $global:ScriptRoot
+$LogsPath = Join-Path $global:ScriptRoot 'Logs'
+$TempPath = Join-Path $global:ScriptRoot 'temp'
+$TestPath = Join-Path $global:ScriptRoot 'test'
+$WatcherPath = Join-Path $global:ScriptRoot 'watcher'
+$CurrentlyRunning = Join-Path $TempPath 'Posterizarr.Running'
+
 Write-Entry -Message "Starting..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Green -log Info
+# Create directories if they don't exist
+foreach ($path in $LogsPath, $TempPath, $TestPath, $WatcherPath) {
+    if (!(Test-Path $path)) {
+        New-Item -ItemType Directory -Path $path -Force | Out-Null
+        Write-Entry -Message "Created missing directory: $path" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color White -log Info
+    }
+}
 # Check if Config file is present
 CheckConfigFile -ScriptRoot $global:ScriptRoot
 # Test Json if something is missing
@@ -7112,28 +7130,21 @@ if ($AutoUpdateIM -eq 'true' -and $global:OSType -ne "Docker" -and $LatestImagem
 }
 
 # Create directories if they don't exist
-foreach ($path in $LogsPath, $TempPath, $TestPath, $AssetPath) {
-    if (!(Test-Path $path)) {
-        if ($global:OSType -ne "Win32NT" -and $path -eq 'P:\assets') {
-            Write-Entry -Message 'Please change default asset Path...' -Path $configLogging -Color Red -log Error
-            # Clear Running File
-            if (Test-Path $CurrentlyRunning) {
-                Remove-Item -LiteralPath $CurrentlyRunning | out-null
-            }
-            if ($global:UptimeKumaUrl) {
-                Send-UptimeKumaWebhook -status "down" -msg "Default asset path"
-            }
-            Exit
+
+if (!(Test-Path $AssetPath)) {
+    if ($global:OSType -ne "Win32NT" -and $AssetPath -eq 'P:\assets') {
+        Write-Entry -Message 'Please change default asset Path...' -Path $configLogging -Color Red -log Error
+        # Clear Running File
+        if (Test-Path $CurrentlyRunning) {
+            Remove-Item -LiteralPath $CurrentlyRunning | out-null
         }
-        New-Item -ItemType Directory -Path $path -Force | Out-Null
+        if ($global:UptimeKumaUrl) {
+            Send-UptimeKumaWebhook -status "down" -msg "Default asset path"
+        }
+        Exit
     }
+    New-Item -ItemType Directory -Path $AssetPath -Force | Out-Null
 }
-# create cache dir if missing
-if (!(Test-Path $global:ScriptRoot\Cache)) {
-    New-Item -ItemType Directory -Path $global:ScriptRoot\Cache -Force | Out-Null
-}
-# Check temp dir if there is a Currently running file present
-$CurrentlyRunning = Join-Path $TempPath 'Posterizarr.Running'
 
 if ($ForceRunningDeletion -eq 'true') {
     if (Test-Path $CurrentlyRunning) {
@@ -7190,8 +7201,14 @@ if ($Testing) {
 if ($config.PrerequisitePart.overlayfile -eq 'overlay.png' -or $config.PrerequisitePart.seasonoverlayfile -eq 'overlay.png') {
     Test-And-Download -url "https://github.com/fscorrupt/Posterizarr/raw/$($Branch)/overlay.png" -destination (Join-Path $global:ScriptRoot 'overlay.png')
 }
+if ($config.PrerequisitePart.overlayfile -eq 'overlay-innerglow.png' -or $config.PrerequisitePart.seasonoverlayfile -eq 'overlay-innerglow.png') {
+    Test-And-Download -url "https://github.com/fscorrupt/Posterizarr/raw/$($Branch)/overlay-innerglow.png" -destination (Join-Path $global:ScriptRoot 'overlay-innerglow.png')
+}
 if ($config.PrerequisitePart.backgroundoverlayfile -eq 'backgroundoverlay.png' -or $config.PrerequisitePart.titlecardoverlayfile -eq 'backgroundoverlay.png') {
     Test-And-Download -url "https://github.com/fscorrupt/Posterizarr/raw/$($Branch)/backgroundoverlay.png" -destination (Join-Path $global:ScriptRoot 'backgroundoverlay.png')
+}
+if ($config.PrerequisitePart.backgroundoverlayfile -eq 'backgroundoverlay-innerglow.png' -or $config.PrerequisitePart.titlecardoverlayfile -eq 'backgroundoverlay-innerglow.png') {
+    Test-And-Download -url "https://github.com/fscorrupt/Posterizarr/raw/$($Branch)/backgroundoverlay-innerglow.png" -destination (Join-Path $global:ScriptRoot 'backgroundoverlay-innerglow.png')
 }
 if ($config.PrerequisitePart.font -eq 'Rocky.ttf' -or $config.PrerequisitePart.backgroundfont -eq 'Rocky.ttf' -or $config.PrerequisitePart.titlecardfont -eq 'Rocky.ttf' -or $config.PrerequisitePart.RTLFont -eq 'Rocky.ttf') {
     Test-And-Download -url "https://github.com/fscorrupt/Posterizarr/raw/$($Branch)/Rocky.ttf" -destination (Join-Path $global:ScriptRoot 'Rocky.ttf')
@@ -11770,96 +11787,98 @@ Elseif ($Tautulli) {
                                                     Write-Entry -Message "Start Title Card Search for: $global:show_name - $global:SeasonEPNumber" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color White -log Info
                                                     $Episodepostersearchtext = $true
                                                 }
-                                                # now search for TitleCards
-                                                if ($global:FavProvider -eq 'TMDB') {
-                                                    if ($episode.tmdbid) {
-                                                        $global:posterurl = GetTMDBShowBackground
-                                                        if (!$global:posterurl) {
+                                                if ($global:TempImagecopied -ne 'true') {
+                                                    # now search for TitleCards
+                                                    if ($global:FavProvider -eq 'TMDB') {
+                                                        if ($episode.tmdbid) {
+                                                            $global:posterurl = GetTMDBShowBackground
+                                                            if (!$global:posterurl) {
+                                                                $global:posterurl = GetTVDBShowBackground
+                                                                if (!$global:posterurl) {
+                                                                    $global:posterurl = GetFanartShowBackground
+                                                                }
+                                                            }
+                                                            if (!$global:posterurl) {
+                                                                $global:IsFallback = $true
+                                                                if ($ArtUrl) {
+                                                                    GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
+                                                                }
+                                                                Else {
+                                                                    Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
+                                                                }
+                                                                if ($global:tmdbfallbackposterurl) {
+                                                                    $global:posterurl = $global:tmdbfallbackposterurl
+                                                                }
+                                                                if (!$global:posterurl) {
+                                                                    Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                }
+                                                            }
+                                                        }
+                                                        else {
+                                                            Write-Entry -Subtext "Can't search on TMDB, missing ID..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
                                                             $global:posterurl = GetTVDBShowBackground
                                                             if (!$global:posterurl) {
                                                                 $global:posterurl = GetFanartShowBackground
                                                             }
-                                                        }
-                                                        if (!$global:posterurl) {
-                                                            $global:IsFallback = $true
-                                                            if ($ArtUrl) {
-                                                                GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
-                                                            }
-                                                            Else {
-                                                                Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
-                                                            }
-                                                            if ($global:tmdbfallbackposterurl) {
-                                                                $global:posterurl = $global:tmdbfallbackposterurl
-                                                            }
                                                             if (!$global:posterurl) {
-                                                                Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                $global:IsFallback = $true
+                                                                if ($ArtUrl) {
+                                                                    GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
+                                                                }
+                                                                Else {
+                                                                    Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
+                                                                }
+                                                                if (!$global:posterurl) {
+                                                                    Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                }
                                                             }
                                                         }
                                                     }
-                                                    else {
-                                                        Write-Entry -Subtext "Can't search on TMDB, missing ID..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
-                                                        $global:posterurl = GetTVDBShowBackground
-                                                        if (!$global:posterurl) {
-                                                            $global:posterurl = GetFanartShowBackground
-                                                        }
-                                                        if (!$global:posterurl) {
-                                                            $global:IsFallback = $true
-                                                            if ($ArtUrl) {
-                                                                GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
-                                                            }
-                                                            Else {
-                                                                Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
+                                                    Else {
+                                                        if ($episode.tvdbid) {
+                                                            $global:posterurl = GetTVDBShowBackground
+                                                            if (!$global:posterurl) {
+                                                                $global:posterurl = GetTMDBShowBackground
+                                                                if (!$global:posterurl) {
+                                                                    $global:posterurl = GetFanartShowBackground
+                                                                }
                                                             }
                                                             if (!$global:posterurl) {
-                                                                Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                $global:IsFallback = $true
+                                                                if ($ArtUrl) {
+                                                                    GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
+                                                                }
+                                                                Else {
+                                                                    Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
+                                                                }
+                                                                if (!$global:posterurl) {
+                                                                    Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                }
                                                             }
                                                         }
-                                                    }
-                                                }
-                                                Else {
-                                                    if ($episode.tvdbid) {
-                                                        $global:posterurl = GetTVDBShowBackground
-                                                        if (!$global:posterurl) {
+                                                        else {
+                                                            Write-Entry -Subtext "Can't search on TVDB, missing ID..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
                                                             $global:posterurl = GetTMDBShowBackground
                                                             if (!$global:posterurl) {
                                                                 $global:posterurl = GetFanartShowBackground
                                                             }
-                                                        }
-                                                        if (!$global:posterurl) {
-                                                            $global:IsFallback = $true
-                                                            if ($ArtUrl) {
-                                                                GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
-                                                            }
-                                                            Else {
-                                                                Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
-                                                            }
                                                             if (!$global:posterurl) {
-                                                                Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
-                                                            }
-                                                        }
-                                                    }
-                                                    else {
-                                                        Write-Entry -Subtext "Can't search on TVDB, missing ID..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
-                                                        $global:posterurl = GetTMDBShowBackground
-                                                        if (!$global:posterurl) {
-                                                            $global:posterurl = GetFanartShowBackground
-                                                        }
-                                                        if (!$global:posterurl) {
-                                                            $global:IsFallback = $true
-                                                            if ($ArtUrl) {
-                                                                GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
-                                                            }
-                                                            Else {
-                                                                Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
-                                                            }
-                                                            if (!$global:posterurl) {
-                                                                Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                $global:IsFallback = $true
+                                                                if ($ArtUrl) {
+                                                                    GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
+                                                                }
+                                                                Else {
+                                                                    Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
+                                                                }
+                                                                if (!$global:posterurl) {
+                                                                    Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                }
                                                             }
                                                         }
                                                     }
                                                 }
                                             }
-                                            if ($global:posterurl -or $global:PlexartworkDownloaded -or $TakeLocal) {
+                                            if ($global:posterurl -or $global:PlexartworkDownloaded -or $TakeLocal -or $global:TempImagecopied -eq 'true') {
                                                 if ($global:ImageProcessing -eq 'true') {
                                                     if ($TakeLocal) {
                                                         Get-ChildItem -LiteralPath "$($ManualTestPath)$posterext" | ForEach-Object {
@@ -11908,6 +11927,7 @@ Elseif ($Tautulli) {
                                                             }
                                                         }
                                                         Else {
+                                                            Write-Entry -Subtext "Taking temp image..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Green -log Info
                                                             Copy-Item -LiteralPath $EpisodeTempImage -destination $EpisodeImage | Out-Null
                                                         }
                                                     }
@@ -13224,10 +13244,15 @@ Elseif ($SyncJelly -or $SyncEmby) {
 
             $libraryQuery = "$OtherMediaServerUrl/Library/VirtualFolders?api_key=$OtherMediaServerApiKey"
             $librarytemp = Invoke-RestMethod -Method Get -Uri $libraryQuery
-            $librariestemp = $librarytemp | Where-Object { $_.CollectionType -eq 'movies' } | Select-Object Name, Locations -Unique
+            $librariestemp = $librarytemp | Where-Object { $_.CollectionType -eq 'movies' } | Select-Object Name, Locations, LibraryOptions -Unique
 
             foreach ($singlelibrary in $librariestemp) {
                 foreach ($location in $singlelibrary.Locations) {
+                    # Select correct NetworkPath
+                    $LibraryOptions = $singlelibrary.LibraryOptions.PathInfos | Where-Object {$_.Path -eq $location}
+                    if ($LibraryOptions.NetworkPath) {
+                        $location = $LibraryOptions.NetworkPath
+                    }
                     Write-Entry -Subtext "  Found location - '$($location)'" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
                     # Compare lib.Path with each location
                     if ($Movie.Path -like "$($location)/*" -or $Movie.Path -like "$($location)\*") {
@@ -13358,10 +13383,22 @@ Elseif ($SyncJelly -or $SyncEmby) {
         $libraryQuery = "$OtherMediaServerUrl/Library/VirtualFolders?api_key=$OtherMediaServerApiKey"
         $librarytemp = Invoke-RestMethod -Method Get -Uri $libraryQuery
         $librariestemp = $librarytemp | Where-Object { $_.CollectionType -eq 'tvshows' } | Select-Object Name, Locations -Unique
-
+        if ($UseEmby -eq 'true') {
+            $librariestemp = $librarytemp | Where-Object { $_.CollectionType -eq 'tvshows' } | Select-Object Name, Locations, LibraryOptions -Unique
+        }
+        Else {
+            $librariestemp = $librarytemp | Where-Object { $_.CollectionType -eq 'tvshows' } | Select-Object Name, Locations -Unique
+        }
         foreach ($singlelibrary in $librariestemp) {
             # Loop through each location in the library's Locations array
             foreach ($location in $singlelibrary.Locations) {
+                if ($UseEmby -eq 'true') {
+                    # Select correct NetworkPath
+                    $LibraryOptions = $singlelibrary.LibraryOptions.PathInfos | Where-Object {$_.Path -eq $location}
+                    if ($LibraryOptions.NetworkPath) {
+                        $location = $LibraryOptions.NetworkPath
+                    }
+                }
                 Write-Entry -Subtext "  Found location - '$($location)'" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
                 # Compare lib.Path with each location
                 if ($Show.Path -like "$location/*" -or $Show.Path -like "$location\*") {
@@ -13520,85 +13557,105 @@ Elseif ($SyncJelly -or $SyncEmby) {
                 if ($global:Posters -eq 'true') {
                     $global:posterurl = $null
                     $global:PosterWithText = $null
-                    if ($PlexToken) {
-                        $Arturl = $plexurl + $entry.PlexPosterUrl + "?X-Plex-Token=$PlexToken"
-                    }
-                    Else {
-                        $Arturl = $plexurl + $entry.PlexPosterUrl
-                    }
-                    $matchingMovie = $OtherAllMovies | Where-Object {
-                        $_.Title -eq $entry.Title -and
-                        $_."Library Name" -eq $entry."Library Name" -and (
-                            $_.TmdbId -eq $entry.TmdbId -or
-                            $_.TvdbId -eq $entry.TvdbId -or
-                            $_.ImdbId -eq $entry.ImdbId
-                        )
-                    }
-                    if ($matchingMovie) {
-                        $MovieTitle = $entry.Title
-                        $imageType = "Primary"
-                        Write-Entry -Subtext "Movie Title: $MovieTitle" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                        Write-Entry -Subtext "Type: $imageType" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                        if ($matchingMovie.id.Count -gt 1) {
-                            foreach ($id in $matchingMovie.id){
-                                $DestUrl = "$OtherMediaServerUrl/items/$id/images/$imageType/?api_key=$OtherMediaServerApiKey"
-                                SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $MovieTitle -artworktype 'poster'
-                                Write-Entry -Subtext "Movie ID: $id" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                            }
+                    if ($null -ne $entry.PlexPosterUrl){
+                        if ($PlexToken) {
+                            $Arturl = $plexurl + $entry.PlexPosterUrl + "?X-Plex-Token=$PlexToken"
                         }
                         Else {
-                            $DestUrl = "$OtherMediaServerUrl/items/$($matchingMovie.id)/images/$imageType/?api_key=$OtherMediaServerApiKey"
-                            if ($matchingMovie.id){
-                                SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $MovieTitle -artworktype 'poster'
-                                Write-Entry -Subtext "Movie ID: $($matchingMovie.id)" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            $Arturl = $plexurl + $entry.PlexPosterUrl
+                        }
+                        $matchingMovie = $OtherAllMovies | Where-Object {
+                            $_.Title -eq $entry.Title -and
+                            $_."Library Name" -eq $entry."Library Name" -and (
+                                $_.TmdbId -eq $entry.TmdbId -or
+                                $_.TvdbId -eq $entry.TvdbId -or
+                                $_.ImdbId -eq $entry.ImdbId
+                            )
+                        }
+                        if ($matchingMovie) {
+                            $MovieTitle = $entry.Title
+                            $imageType = "Primary"
+                            Write-Entry -Subtext "--------------------------------------------------" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            Write-Entry -Message "Movie Title: $MovieTitle" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            Write-Entry -Message "Type: $imageType" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            if ($matchingMovie.id.Count -gt 1) {
+                                foreach ($id in $matchingMovie.id){
+                                    $DestUrl = "$OtherMediaServerUrl/items/$id/images/$imageType/?api_key=$OtherMediaServerApiKey"
+                                    SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $MovieTitle -artworktype 'poster'
+                                    Write-Entry -Subtext "Movie ID: $id" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                }
                             }
                             Else {
-                                Write-Entry -Message "Could not find Movie ID for '$MovieTitle' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                $DestUrl = "$OtherMediaServerUrl/items/$($matchingMovie.id)/images/$imageType/?api_key=$OtherMediaServerApiKey"
+                                if ($matchingMovie.id){
+                                    SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $MovieTitle -artworktype 'poster'
+                                    Write-Entry -Subtext "Movie ID: $($matchingMovie.id)" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                }
+                                Else {
+                                    Write-Entry -Message "Could not find Movie ID for '$MovieTitle' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                }
                             }
                         }
                     }
+                    Else {
+                        Write-Entry -Message "Could not find Poster URL for '$($entry.title)' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                        Write-Entry -Message "Please fix the metadata on the source media server to resolve this issue." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                        Write-Entry -Subtext "[ERROR-HERE] See above. ^^^" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                        $errorCount++
+                    }
+
                 }
                 # Now we can start the Background Poster Part
                 if ($global:BackgroundPosters -eq 'true') {
                     $global:posterurl = $null
                     $global:PosterWithText = $null
-                    if ($PlexToken) {
-                        $Arturl = $plexurl + $entry.PlexBackgroundUrl + "?X-Plex-Token=$PlexToken"
-                    }
-                    Else {
-                        $Arturl = $plexurl + $entry.PlexBackgroundUrl
-                    }
-
-                    $matchingMovie = $OtherAllMovies | Where-Object {
-                        $_.Title -eq $entry.Title -and
-                        $_."Library Name" -eq $entry."Library Name" -and (
-                            $_.TmdbId -eq $entry.TmdbId -or
-                            $_.TvdbId -eq $entry.TvdbId -or
-                            $_.ImdbId -eq $entry.ImdbId
-                        )
-                    }
-                    if ($matchingMovie) {
-                        $MovieTitle = $entry.Title + " | Background"
-                        $imageType = "Backdrop"
-                        Write-Entry -Subtext "Movie Title: $MovieTitle" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                        Write-Entry -Subtext "Type: $imageType" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                        if ($matchingMovie.id.Count -gt 1) {
-                            foreach ($id in $matchingMovie.id){
-                                $DestUrl = "$OtherMediaServerUrl/items/$id/images/$imageType/?api_key=$OtherMediaServerApiKey"
-                                SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $MovieTitle -artworktype 'background'
-                                Write-Entry -Subtext "Movie ID: $id" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                            }
+                    # check if Background url id exists.
+                    if ($null -ne $entry.PlexBackgroundUrl){
+                        if ($PlexToken) {
+                            $Arturl = $plexurl + $entry.PlexBackgroundUrl + "?X-Plex-Token=$PlexToken"
                         }
                         Else {
-                            $DestUrl = "$OtherMediaServerUrl/items/$($matchingMovie.id)/images/$imageType/?api_key=$OtherMediaServerApiKey"
-                            if ($matchingMovie.id){
-                                SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $MovieTitle -artworktype 'background'
-                                Write-Entry -Subtext "Movie ID: $($matchingMovie.id)" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            $Arturl = $plexurl + $entry.PlexBackgroundUrl
+                        }
+
+                        $matchingMovie = $OtherAllMovies | Where-Object {
+                            $_.Title -eq $entry.Title -and
+                            $_."Library Name" -eq $entry."Library Name" -and (
+                                $_.TmdbId -eq $entry.TmdbId -or
+                                $_.TvdbId -eq $entry.TvdbId -or
+                                $_.ImdbId -eq $entry.ImdbId
+                            )
+                        }
+                        if ($matchingMovie) {
+                            $MovieTitle = $entry.Title + " | Background"
+                            $imageType = "Backdrop"
+                            Write-Entry -Subtext "--------------------------------------------------" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            Write-Entry -Message "Movie Title: $MovieTitle" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            Write-Entry -Message "Type: $imageType" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            if ($matchingMovie.id.Count -gt 1) {
+                                foreach ($id in $matchingMovie.id){
+                                    $DestUrl = "$OtherMediaServerUrl/items/$id/images/$imageType/?api_key=$OtherMediaServerApiKey"
+                                    SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $MovieTitle -artworktype 'background'
+                                    Write-Entry -Subtext "Movie ID: $id" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                }
                             }
                             Else {
-                                Write-Entry -Message "Could not find Movie ID for '$MovieTitle' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                $DestUrl = "$OtherMediaServerUrl/items/$($matchingMovie.id)/images/$imageType/?api_key=$OtherMediaServerApiKey"
+                                if ($matchingMovie.id){
+                                    SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $MovieTitle -artworktype 'background'
+                                    Write-Entry -Subtext "Movie ID: $($matchingMovie.id)" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                }
+                                Else {
+                                    Write-Entry -Message "Could not find Movie ID for '$MovieTitle' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                }
                             }
                         }
+                    }
+                    Else {
+                        Write-Entry -Message "Could not find Background URL for '$($entry.title)' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                        Write-Entry -Message "Please fix the metadata on the source media server to resolve this issue." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                        Write-Entry -Subtext "[ERROR-HERE] See above. ^^^" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                        $errorCount++
                     }
                 }
             }
@@ -13622,83 +13679,103 @@ Elseif ($SyncJelly -or $SyncEmby) {
             Else {
                 # Now we can start the Poster Part
                 if ($global:Posters -eq 'true') {
-                    if ($PlexToken) {
-                        $Arturl = $plexurl + $entry.PlexPosterUrl + "?X-Plex-Token=$PlexToken"
-                    }
-                    Else {
-                        $Arturl = $plexurl + $entry.PlexPosterUrl
-                    }
-
-                    $matchingShow = $OtherAllShows | Where-Object {
-                        ($_.Title -eq $entry.Title -or $_.originalTitle -eq $entry.originalTitle) -and
-                        $_."Library Name" -eq $entry."Library Name" -and (
-                            $_.TmdbId -eq $entry.TmdbId -or
-                            $_.TvdbId -eq $entry.TvdbId
-                        )
-                    }
-                    if ($matchingShow) {
-                        $ShowTitle = $entry.Title
-                        $imageType = "Primary"
-                        Write-Entry -Subtext "Show Title: $ShowTitle" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                        Write-Entry -Subtext "Type: $imageType" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                        if ($matchingShow.id.Count -gt 1) {
-                            foreach ($id in $matchingShow.id){
-                                $DestUrl = "$OtherMediaServerUrl/items/$id/images/$imageType/?api_key=$OtherMediaServerApiKey"
-                                SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'poster'
-                                Write-Entry -Subtext "Show ID: $id" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                            }
+                    if ($null -ne $entry.PlexPosterUrl){
+                        if ($PlexToken) {
+                            $Arturl = $plexurl + $entry.PlexPosterUrl + "?X-Plex-Token=$PlexToken"
                         }
                         Else {
-                            $DestUrl = "$OtherMediaServerUrl/items/$($matchingShow.id)/images/$imageType/?api_key=$OtherMediaServerApiKey"
-                            if ($matchingShow.id){
-                                SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'poster'
-                                Write-Entry -Subtext "Show ID: $($matchingShow.id)" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            $Arturl = $plexurl + $entry.PlexPosterUrl
+                        }
+
+                        $matchingShow = $OtherAllShows | Where-Object {
+                            ($_.Title -eq $entry.Title -or $_.originalTitle -eq $entry.originalTitle) -and
+                            $_."Library Name" -eq $entry."Library Name" -and (
+                                $_.TmdbId -eq $entry.TmdbId -or
+                                $_.TvdbId -eq $entry.TvdbId
+                            )
+                        }
+                        if ($matchingShow) {
+                            $ShowTitle = $entry.Title
+                            $imageType = "Primary"
+                            Write-Entry -Subtext "--------------------------------------------------" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            Write-Entry -Message "Show Title: $ShowTitle" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            Write-Entry -Message "Type: $imageType" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            if ($matchingShow.id.Count -gt 1) {
+                                foreach ($id in $matchingShow.id){
+                                    $DestUrl = "$OtherMediaServerUrl/items/$id/images/$imageType/?api_key=$OtherMediaServerApiKey"
+                                    SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'poster'
+                                    Write-Entry -Subtext "Show ID: $id" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                }
                             }
                             Else {
-                                Write-Entry -Message "Could not find Show ID for '$ShowTitle' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                $DestUrl = "$OtherMediaServerUrl/items/$($matchingShow.id)/images/$imageType/?api_key=$OtherMediaServerApiKey"
+                                if ($matchingShow.id){
+                                    SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'poster'
+                                    Write-Entry -Subtext "Show ID: $($matchingShow.id)" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                }
+                                Else {
+                                    Write-Entry -Message "Could not find Show ID for '$ShowTitle' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                }
                             }
                         }
                     }
+                    Else {
+                        Write-Entry -Message "Could not find Poster URL for '$($entry.title)' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                        Write-Entry -Message "Please fix the metadata on the source media server to resolve this issue." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                        Write-Entry -Subtext "[ERROR-HERE] See above. ^^^" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                        $errorCount++
+                    }
+
                 }
                 # Now we can start the Background Poster Part
                 if ($global:BackgroundPosters -eq 'true') {
-                    if ($PlexToken) {
-                        $Arturl = $plexurl + $entry.PlexBackgroundUrl + "?X-Plex-Token=$PlexToken"
-                    }
-                    Else {
-                        $Arturl = $plexurl + $entry.PlexBackgroundUrl
-                    }
-
-                    $matchingShow = $OtherAllShows | Where-Object {
-                        ($_.Title -eq $entry.Title -or $_.originalTitle -eq $entry.originalTitle) -and
-                        $_."Library Name" -eq $entry."Library Name" -and (
-                            $_.TmdbId -eq $entry.TmdbId -or
-                            $_.TvdbId -eq $entry.TvdbId
-                        )
-                    }
-                    if ($matchingShow) {
-                        $ShowTitle = $entry.Title + " | Background"
-                        $imageType = "Backdrop"
-                        Write-Entry -Subtext "Show Title: $ShowTitle" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                        Write-Entry -Subtext "Type: $imageType" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                        if ($matchingShow.id.Count -gt 1) {
-                            foreach ($id in $matchingShow.id){
-                                $DestUrl = "$OtherMediaServerUrl/items/$id/images/$imageType/?api_key=$OtherMediaServerApiKey"
-                                SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'background'
-                                Write-Entry -Subtext "Show ID: $id" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                            }
+                    if ($null -ne $entry.PlexBackgroundUrl){
+                        if ($PlexToken) {
+                            $Arturl = $plexurl + $entry.PlexBackgroundUrl + "?X-Plex-Token=$PlexToken"
                         }
                         Else {
-                            $DestUrl = "$OtherMediaServerUrl/items/$($matchingShow.id)/images/$imageType/?api_key=$OtherMediaServerApiKey"
-                            if ($matchingShow.id){
-                                SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'background'
-                                Write-Entry -Subtext "Show ID: $($matchingShow.id)" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            $Arturl = $plexurl + $entry.PlexBackgroundUrl
+                        }
+
+                        $matchingShow = $OtherAllShows | Where-Object {
+                            ($_.Title -eq $entry.Title -or $_.originalTitle -eq $entry.originalTitle) -and
+                            $_."Library Name" -eq $entry."Library Name" -and (
+                                $_.TmdbId -eq $entry.TmdbId -or
+                                $_.TvdbId -eq $entry.TvdbId
+                            )
+                        }
+                        if ($matchingShow) {
+                            $ShowTitle = $entry.Title + " | Background"
+                            $imageType = "Backdrop"
+                            Write-Entry -Subtext "--------------------------------------------------" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            Write-Entry -Message "Show Title: $ShowTitle" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            Write-Entry -Message "Type: $imageType" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                            if ($matchingShow.id.Count -gt 1) {
+                                foreach ($id in $matchingShow.id){
+                                    $DestUrl = "$OtherMediaServerUrl/items/$id/images/$imageType/?api_key=$OtherMediaServerApiKey"
+                                    SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'background'
+                                    Write-Entry -Subtext "Show ID: $id" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                }
                             }
                             Else {
-                                Write-Entry -Message "Could not find Show ID for '$ShowTitle' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                $DestUrl = "$OtherMediaServerUrl/items/$($matchingShow.id)/images/$imageType/?api_key=$OtherMediaServerApiKey"
+                                if ($matchingShow.id){
+                                    SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'background'
+                                    Write-Entry -Subtext "Show ID: $($matchingShow.id)" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                }
+                                Else {
+                                    Write-Entry -Message "Could not find Show ID for '$ShowTitle' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                }
                             }
                         }
                     }
+                    Else {
+                        Write-Entry -Message "Could not find Background URL for '$($entry.title)' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                        write-Entry -Subtext "At line $($_.InvocationInfo.ScriptLineNumber)." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                        Write-Entry -Subtext "[ERROR-HERE] See above. ^^^" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                        $errorCount++
+                    }
+
                 }
                 # Now we can start the Season Poster Part
                 if ($global:SeasonPosters -eq 'true') {
@@ -13707,45 +13784,54 @@ Elseif ($SyncJelly -or $SyncEmby) {
                     for ($i = 0; $i -lt $global:seasonNumbers.Count; $i++) {
                         $global:SeasonNumber = $global:seasonNumbers[$i]
                         $global:PlexSeasonUrl = $global:PlexSeasonUrls[$i]
-
-                        if ($PlexToken) {
-                            $Arturl = $plexurl + $global:PlexSeasonUrl + "?X-Plex-Token=$PlexToken"
-                        }
-                        Else {
-                            $Arturl = $plexurl + $global:PlexSeasonUrl
-                        }
-
-                        $matchingSeason = $OtherEpisodedata | Where-Object {
-                            ($_.'Show Name' -eq $entry.Title -or $_.'Show Name' -eq $entry.originalTitle -or $_."Show Original Name" -eq $entry.originalTitle -or $_."Show Original Name" -eq $entry.Title) -and
-                            $_."Library Name" -eq $entry."Library Name" -and
-                            $_."Season Number" -eq $global:SeasonNumber -and (
-                                $_.TmdbId -eq $entry.TmdbId -or
-                                $_.TvdbId -eq $entry.TvdbId
-                            )
-                        }
-                        if ($matchingSeason) {
-                            $ShowTitle = $entry.Title + " | Season $global:SeasonNumber"
-                            $imageType = "Primary"
-                            Write-Entry -Subtext "Show Title: $ShowTitle" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                            Write-Entry -Subtext "Type: $imageType" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                            if ($matchingSeason.SeasonId.Count -gt 1) {
-                                foreach ($id in $matchingSeason.SeasonId){
-                                    $DestUrl = "$OtherMediaServerUrl/items/$id/images/$imageType/?api_key=$OtherMediaServerApiKey"
-                                    SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'season'
-                                    Write-Entry -Subtext "Season ID: $id" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                                }
+                        if ($null -ne $global:PlexSeasonUrl){
+                            if ($PlexToken) {
+                                $Arturl = $plexurl + $global:PlexSeasonUrl + "?X-Plex-Token=$PlexToken"
                             }
                             Else {
-                                $DestUrl = "$OtherMediaServerUrl/items/$($matchingSeason.SeasonId)/images/$imageType/?api_key=$OtherMediaServerApiKey"
-                                if ($matchingSeason.SeasonId){
-                                    SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'season'
-                                    Write-Entry -Subtext "Season ID: $($matchingSeason.SeasonId)" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                $Arturl = $plexurl + $global:PlexSeasonUrl
+                            }
+
+                            $matchingSeason = $OtherEpisodedata | Where-Object {
+                                ($_.'Show Name' -eq $entry.Title -or $_.'Show Name' -eq $entry.originalTitle -or $_."Show Original Name" -eq $entry.originalTitle -or $_."Show Original Name" -eq $entry.Title) -and
+                                $_."Library Name" -eq $entry."Library Name" -and
+                                $_."Season Number" -eq $global:SeasonNumber -and (
+                                    $_.TmdbId -eq $entry.TmdbId -or
+                                    $_.TvdbId -eq $entry.TvdbId
+                                )
+                            }
+                            if ($matchingSeason) {
+                                $ShowTitle = $entry.Title + " | Season $global:SeasonNumber"
+                                $imageType = "Primary"
+                                Write-Entry -Subtext "--------------------------------------------------" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                Write-Entry -Message "Show Title: $ShowTitle" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                Write-Entry -Message "Type: $imageType" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                if ($matchingSeason.SeasonId.Count -gt 1) {
+                                    foreach ($id in $matchingSeason.SeasonId){
+                                        $DestUrl = "$OtherMediaServerUrl/items/$id/images/$imageType/?api_key=$OtherMediaServerApiKey"
+                                        SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'season'
+                                        Write-Entry -Subtext "Season ID: $id" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                    }
                                 }
                                 Else {
-                                    Write-Entry -Message "Could not find Season ID for '$ShowTitle' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                    $DestUrl = "$OtherMediaServerUrl/items/$($matchingSeason.SeasonId)/images/$imageType/?api_key=$OtherMediaServerApiKey"
+                                    if ($matchingSeason.SeasonId){
+                                        SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'season'
+                                        Write-Entry -Subtext "Season ID: $($matchingSeason.SeasonId)" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                    }
+                                    Else {
+                                        Write-Entry -Message "Could not find Season ID for '$ShowTitle' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                    }
                                 }
                             }
                         }
+                        Else {
+                            Write-Entry -Message "Could not find Season URL for '$($entry.Title) - Season $global:SeasonNumber' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                            Write-Entry -Message "Please fix the metadata on the source media server to resolve this issue." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                            Write-Entry -Subtext "[ERROR-HERE] See above. ^^^" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                            $errorCount++
+                        }
+
                     }
                 }
                 # Now we can start the Title Card Part
@@ -13765,43 +13851,51 @@ Elseif ($SyncJelly -or $SyncEmby) {
                             for ($i = 0; $i -lt $global:episode_numbers.Count; $i++) {
                                 $global:PlexTitleCardUrl = $($global:PlexTitleCardUrls[$i].Trim())
                                 $global:episodenumber = $($global:episode_numbers[$i].Trim())
-
-                                if ($PlexToken) {
-                                    $Arturl = $plexurl + $global:PlexTitleCardUrl + "?X-Plex-Token=$PlexToken"
-                                }
-                                else {
-                                    $Arturl = $plexurl + $global:PlexTitleCardUrl
-                                }
-
-                                # Find matching episode in OtherEpisodedata
-                                $matchingEpisode = $OtherEpisodedata | Where-Object {
-                                    ($_.'Show Name' -eq $entry.title -or $_.'Show Name' -eq $entry.originalTitle) -and
-                                    $_."Library Name" -eq $entry."Library Name" -and
-                                    $_."Season Number" -eq $global:season_number -and
-                                    ($_.Episodes.Split(",") -contains $global:episodenumber) -and (
-                                        $_.TmdbId -eq $entry.TmdbId -or
-                                        $_.TvdbId -eq $entry.TvdbId
-                                    )
-                                }
-                                if ($matchingEpisode) {
-                                    # Select the matching episode ID based on the current index
-                                    $global:episodeid = $matchingEpisode.EpisodeIds.Split(",")[$i]
-                                    # Construct the show title with the current episode number
-                                    $ShowTitle = "$($entry.Title) | Season $($global:season_number) - Episode $global:episodenumber"
-                                    # Define the image type and destination URL
-                                    $imageType = "Primary"
-                                    $DestUrl = "$OtherMediaServerUrl/items/$($global:episodeid)/images/$imageType/?api_key=$OtherMediaServerApiKey"
-                                    # Call the SyncPlexArtwork function to sync the artwork
-                                    if ($matchingShow.id){
-                                        SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'tc'
+                                if ($null -ne $global:PlexTitleCardUrl){
+                                    if ($PlexToken) {
+                                        $Arturl = $plexurl + $global:PlexTitleCardUrl + "?X-Plex-Token=$PlexToken"
                                     }
-                                    Else {
-                                        Write-Entry -Message "Could not find Episode ID for '$ShowTitle' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                    else {
+                                        $Arturl = $plexurl + $global:PlexTitleCardUrl
                                     }
-                                    Write-Entry -Subtext "Show Title: $ShowTitle" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                                    Write-Entry -Subtext "Type: $imageType" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
-                                    Write-Entry -Subtext "Episode ID: $global:episodeid" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+
+                                    # Find matching episode in OtherEpisodedata
+                                    $matchingEpisode = $OtherEpisodedata | Where-Object {
+                                        ($_.'Show Name' -eq $entry.title -or $_.'Show Name' -eq $entry.originalTitle) -and
+                                        $_."Library Name" -eq $entry."Library Name" -and
+                                        $_."Season Number" -eq $global:season_number -and
+                                        ($_.Episodes.Split(",") -contains $global:episodenumber) -and (
+                                            $_.TmdbId -eq $entry.TmdbId -or
+                                            $_.TvdbId -eq $entry.TvdbId
+                                        )
+                                    }
+                                    if ($matchingEpisode) {
+                                        # Select the matching episode ID based on the current index
+                                        $global:episodeid = $matchingEpisode.EpisodeIds.Split(",")[$i]
+                                        # Construct the show title with the current episode number
+                                        $ShowTitle = "$($entry.Title) | Season $($global:season_number) - Episode $global:episodenumber"
+                                        # Define the image type and destination URL
+                                        $imageType = "Primary"
+                                        $DestUrl = "$OtherMediaServerUrl/items/$($global:episodeid)/images/$imageType/?api_key=$OtherMediaServerApiKey"
+                                        # Call the SyncPlexArtwork function to sync the artwork
+                                        if ($matchingShow.id){
+                                            SyncPlexArtwork -ArtUrl $Arturl -DestUrl $DestUrl -imagetype $imageType -title $ShowTitle -artworktype 'tc'
+                                        }
+                                        Else {
+                                            Write-Entry -Message "Could not find Episode ID for '$ShowTitle' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                        }
+                                        Write-Entry -Subtext "Show Title: $ShowTitle" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                        Write-Entry -Subtext "Type: $imageType" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                        Write-Entry -Subtext "Episode ID: $global:episodeid" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
+                                    }
                                 }
+                                Else {
+                                    Write-Entry -Message "Could not find TitleCard URL for '$($entry.Title) - Season $global:season_number - Episode $global:episodenumber' in $($entry.'Library Name')" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                    Write-Entry -Message "Please fix the metadata on the source media server to resolve this issue." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                    Write-Entry -Subtext "[ERROR-HERE] See above. ^^^" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                    $errorCount++
+                                }
+
                             }
                         }
                     }
@@ -13973,10 +14067,16 @@ Elseif ($OtherMediaServerUrl -and $OtherMediaServerApiKey -and $UseOtherMediaSer
 
             $libraryQuery = "$OtherMediaServerUrl/Library/VirtualFolders?api_key=$OtherMediaServerApiKey"
             $librarytemp = Invoke-RestMethod -Method Get -Uri $libraryQuery
-            $librariestemp = $librarytemp | Where-Object { $_.CollectionType -eq 'movies' } | Select-Object Name, Locations -Unique
+            $librariestemp = $librarytemp | Where-Object { $_.CollectionType -eq 'movies' } | Select-Object Name, Locations, LibraryOptions -Unique
 
             foreach ($singlelibrary in $librariestemp) {
                 foreach ($location in $singlelibrary.Locations) {
+                    # Select correct NetworkPath
+                    $LibraryOptions = $singlelibrary.LibraryOptions.PathInfos | Where-Object {$_.Path -eq $location}
+                    if ($LibraryOptions.NetworkPath) {
+                        $location = $LibraryOptions.NetworkPath
+                    }
+
                     Write-Entry -Subtext "  Found location - '$($location)'" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
                     # Compare lib.Path with each location
                     if ($Movie.Path -like "$($location)/*" -or $Movie.Path -like "$($location)\*") {
@@ -14130,11 +14230,22 @@ Elseif ($OtherMediaServerUrl -and $OtherMediaServerApiKey -and $UseOtherMediaSer
 
         $libraryQuery = "$OtherMediaServerUrl/Library/VirtualFolders?api_key=$OtherMediaServerApiKey"
         $librarytemp = Invoke-RestMethod -Method Get -Uri $libraryQuery
-        $librariestemp = $librarytemp | Where-Object { $_.CollectionType -eq 'tvshows' } | Select-Object Name, Locations -Unique
-
+        if ($UseEmby -eq 'true') {
+            $librariestemp = $librarytemp | Where-Object { $_.CollectionType -eq 'tvshows' } | Select-Object Name, Locations, LibraryOptions -Unique
+        }
+        Else {
+            $librariestemp = $librarytemp | Where-Object { $_.CollectionType -eq 'tvshows' } | Select-Object Name, Locations -Unique
+        }
         foreach ($singlelibrary in $librariestemp) {
             # Loop through each location in the library's Locations array
             foreach ($location in $singlelibrary.Locations) {
+                if ($UseEmby -eq 'true') {
+                    # Select correct NetworkPath
+                    $LibraryOptions = $singlelibrary.LibraryOptions.PathInfos | Where-Object {$_.Path -eq $location}
+                    if ($LibraryOptions.NetworkPath) {
+                        $location = $LibraryOptions.NetworkPath
+                    }
+                }
                 Write-Entry -Subtext "  Found location - '$($location)'" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Cyan -log Debug
                 # Compare lib.Path with each location
                 if ($Show.Path -like "$location/*" -or $Show.Path -like "$location\*") {
@@ -16667,71 +16778,73 @@ Elseif ($OtherMediaServerUrl -and $OtherMediaServerApiKey -and $UseOtherMediaSer
                                                     $Episodepostersearchtext = $true
                                                 }
                                                 # now search for TitleCards
-                                                if ($global:FavProvider -eq 'TMDB') {
-                                                    if ($episode.tmdbid) {
-                                                        $global:posterurl = GetTMDBShowBackground
-                                                        if (!$global:posterurl) {
+                                                if ($global:TempImagecopied -ne 'True'){
+                                                    if ($global:FavProvider -eq 'TMDB') {
+                                                        if ($episode.tmdbid) {
+                                                            $global:posterurl = GetTMDBShowBackground
+                                                            if (!$global:posterurl) {
+                                                                $global:posterurl = GetTVDBShowBackground
+                                                                if (!$global:posterurl) {
+                                                                    $global:posterurl = GetFanartShowBackground
+                                                                }
+                                                            }
+                                                            if (!$global:posterurl) {
+                                                                $global:IsFallback = $true
+                                                                if ($global:tmdbfallbackposterurl) {
+                                                                    $global:posterurl = $global:tmdbfallbackposterurl
+                                                                }
+                                                                if (!$global:posterurl) {
+                                                                    Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                }
+                                                            }
+                                                        }
+                                                        else {
+                                                            Write-Entry -Subtext "Can't search on TMDB, missing ID..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
                                                             $global:posterurl = GetTVDBShowBackground
                                                             if (!$global:posterurl) {
                                                                 $global:posterurl = GetFanartShowBackground
                                                             }
-                                                        }
-                                                        if (!$global:posterurl) {
-                                                            $global:IsFallback = $true
-                                                            if ($global:tmdbfallbackposterurl) {
-                                                                $global:posterurl = $global:tmdbfallbackposterurl
-                                                            }
                                                             if (!$global:posterurl) {
-                                                                Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                $global:IsFallback = $true
+                                                                if (!$global:posterurl) {
+                                                                    Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                }
                                                             }
                                                         }
                                                     }
-                                                    else {
-                                                        Write-Entry -Subtext "Can't search on TMDB, missing ID..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
-                                                        $global:posterurl = GetTVDBShowBackground
-                                                        if (!$global:posterurl) {
-                                                            $global:posterurl = GetFanartShowBackground
-                                                        }
-                                                        if (!$global:posterurl) {
-                                                            $global:IsFallback = $true
+                                                    Else {
+                                                        if ($episode.tvdbid) {
+                                                            $global:posterurl = GetTVDBShowBackground
                                                             if (!$global:posterurl) {
-                                                                Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                $global:posterurl = GetTMDBShowBackground
+                                                                if (!$global:posterurl) {
+                                                                    $global:posterurl = GetFanartShowBackground
+                                                                }
+                                                            }
+                                                            if (!$global:posterurl) {
+                                                                $global:IsFallback = $true
+                                                                if (!$global:posterurl) {
+                                                                    Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                }
                                                             }
                                                         }
-                                                    }
-                                                }
-                                                Else {
-                                                    if ($episode.tvdbid) {
-                                                        $global:posterurl = GetTVDBShowBackground
-                                                        if (!$global:posterurl) {
+                                                        else {
+                                                            Write-Entry -Subtext "Can't search on TVDB, missing ID..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
                                                             $global:posterurl = GetTMDBShowBackground
                                                             if (!$global:posterurl) {
                                                                 $global:posterurl = GetFanartShowBackground
                                                             }
-                                                        }
-                                                        if (!$global:posterurl) {
-                                                            $global:IsFallback = $true
                                                             if (!$global:posterurl) {
-                                                                Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
-                                                            }
-                                                        }
-                                                    }
-                                                    else {
-                                                        Write-Entry -Subtext "Can't search on TVDB, missing ID..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
-                                                        $global:posterurl = GetTMDBShowBackground
-                                                        if (!$global:posterurl) {
-                                                            $global:posterurl = GetFanartShowBackground
-                                                        }
-                                                        if (!$global:posterurl) {
-                                                            $global:IsFallback = $true
-                                                            if (!$global:posterurl) {
-                                                                Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                $global:IsFallback = $true
+                                                                if (!$global:posterurl) {
+                                                                    Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                }
                                                             }
                                                         }
                                                     }
                                                 }
                                             }
-                                            if ($global:posterurl -or $TakeLocal) {
+                                            if ($global:posterurl -or $TakeLocal -or $global:TempImagecopied -eq 'True') {
                                                 if ($TakeLocal) {
                                                     Get-ChildItem -LiteralPath "$($ManualTestPath)$posterext" | ForEach-Object {
                                                         Copy-Item -LiteralPath $_.FullName -Destination $EpisodeImage | Out-Null
@@ -16760,16 +16873,20 @@ Elseif ($OtherMediaServerUrl -and $OtherMediaServerApiKey -and $UseOtherMediaSer
                                                         }
                                                     }
                                                     Else {
+                                                        Write-Entry -Subtext "Taking temp image..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Green -log Info
                                                         Copy-Item -LiteralPath $EpisodeTempImage -destination $EpisodeImage | Out-Null
                                                     }
-                                                    try {
-                                                        $response = Invoke-WebRequest -Uri $global:posterurl -OutFile $EpisodeImage -ErrorAction Stop
-                                                    }
-                                                    catch {
-                                                        $statusCode = $_.Exception.Response.StatusCode
-                                                        Write-Entry -Subtext "An error occurred while downloading the artwork: $statusCode" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
-                                                        Write-Entry -Subtext "[ERROR-HERE] See above. ^^^" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
-                                                        $errorCount++
+                                                    if ($global:TempImagecopied -ne 'True') {
+                                                        try {
+                                                            $response = Invoke-WebRequest -Uri $global:posterurl -OutFile $EpisodeImage -ErrorAction Stop
+                                                            Copy-Item -LiteralPath $EpisodeImage -destination $EpisodeTempImage | Out-Null
+                                                        }
+                                                        catch {
+                                                            $statusCode = $_.Exception.Response.StatusCode
+                                                            Write-Entry -Subtext "An error occurred while downloading the artwork: $statusCode" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                            Write-Entry -Subtext "[ERROR-HERE] See above. ^^^" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                            $errorCount++
+                                                        }
                                                     }
                                                 }
                                                 if ($global:ImageProcessing -eq 'true') {
@@ -21229,96 +21346,98 @@ else {
                                                     Write-Entry -Message "Start Title Card Search for: $global:show_name - $global:SeasonEPNumber" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color White -log Info
                                                     $Episodepostersearchtext = $true
                                                 }
-                                                # now search for TitleCards
-                                                if ($global:FavProvider -eq 'TMDB') {
-                                                    if ($episode.tmdbid) {
-                                                        $global:posterurl = GetTMDBShowBackground
-                                                        if (!$global:posterurl) {
+                                                if ($global:TempImagecopied -ne 'true'){
+                                                    # now search for TitleCards
+                                                    if ($global:FavProvider -eq 'TMDB') {
+                                                        if ($episode.tmdbid) {
+                                                            $global:posterurl = GetTMDBShowBackground
+                                                            if (!$global:posterurl) {
+                                                                $global:posterurl = GetTVDBShowBackground
+                                                                if (!$global:posterurl) {
+                                                                    $global:posterurl = GetFanartShowBackground
+                                                                }
+                                                            }
+                                                            if (!$global:posterurl) {
+                                                                $global:IsFallback = $true
+                                                                if ($ArtUrl) {
+                                                                    GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
+                                                                }
+                                                                Else {
+                                                                    Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
+                                                                }
+                                                                if ($global:tmdbfallbackposterurl) {
+                                                                    $global:posterurl = $global:tmdbfallbackposterurl
+                                                                }
+                                                                if (!$global:posterurl) {
+                                                                    Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                }
+                                                            }
+                                                        }
+                                                        else {
+                                                            Write-Entry -Subtext "Can't search on TMDB, missing ID..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
                                                             $global:posterurl = GetTVDBShowBackground
                                                             if (!$global:posterurl) {
                                                                 $global:posterurl = GetFanartShowBackground
                                                             }
-                                                        }
-                                                        if (!$global:posterurl) {
-                                                            $global:IsFallback = $true
-                                                            if ($ArtUrl) {
-                                                                GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
-                                                            }
-                                                            Else {
-                                                                Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
-                                                            }
-                                                            if ($global:tmdbfallbackposterurl) {
-                                                                $global:posterurl = $global:tmdbfallbackposterurl
-                                                            }
                                                             if (!$global:posterurl) {
-                                                                Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                $global:IsFallback = $true
+                                                                if ($ArtUrl) {
+                                                                    GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
+                                                                }
+                                                                Else {
+                                                                    Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
+                                                                }
+                                                                if (!$global:posterurl) {
+                                                                    Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                }
                                                             }
                                                         }
                                                     }
-                                                    else {
-                                                        Write-Entry -Subtext "Can't search on TMDB, missing ID..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
-                                                        $global:posterurl = GetTVDBShowBackground
-                                                        if (!$global:posterurl) {
-                                                            $global:posterurl = GetFanartShowBackground
-                                                        }
-                                                        if (!$global:posterurl) {
-                                                            $global:IsFallback = $true
-                                                            if ($ArtUrl) {
-                                                                GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
-                                                            }
-                                                            Else {
-                                                                Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
+                                                    Else {
+                                                        if ($episode.tvdbid) {
+                                                            $global:posterurl = GetTVDBShowBackground
+                                                            if (!$global:posterurl) {
+                                                                $global:posterurl = GetTMDBShowBackground
+                                                                if (!$global:posterurl) {
+                                                                    $global:posterurl = GetFanartShowBackground
+                                                                }
                                                             }
                                                             if (!$global:posterurl) {
-                                                                Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                $global:IsFallback = $true
+                                                                if ($ArtUrl) {
+                                                                    GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
+                                                                }
+                                                                Else {
+                                                                    Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
+                                                                }
+                                                                if (!$global:posterurl) {
+                                                                    Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                }
                                                             }
                                                         }
-                                                    }
-                                                }
-                                                Else {
-                                                    if ($episode.tvdbid) {
-                                                        $global:posterurl = GetTVDBShowBackground
-                                                        if (!$global:posterurl) {
+                                                        else {
+                                                            Write-Entry -Subtext "Can't search on TVDB, missing ID..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
                                                             $global:posterurl = GetTMDBShowBackground
                                                             if (!$global:posterurl) {
                                                                 $global:posterurl = GetFanartShowBackground
                                                             }
-                                                        }
-                                                        if (!$global:posterurl) {
-                                                            $global:IsFallback = $true
-                                                            if ($ArtUrl) {
-                                                                GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
-                                                            }
-                                                            Else {
-                                                                Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
-                                                            }
                                                             if (!$global:posterurl) {
-                                                                Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
-                                                            }
-                                                        }
-                                                    }
-                                                    else {
-                                                        Write-Entry -Subtext "Can't search on TVDB, missing ID..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
-                                                        $global:posterurl = GetTMDBShowBackground
-                                                        if (!$global:posterurl) {
-                                                            $global:posterurl = GetFanartShowBackground
-                                                        }
-                                                        if (!$global:posterurl) {
-                                                            $global:IsFallback = $true
-                                                            if ($ArtUrl) {
-                                                                GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
-                                                            }
-                                                            Else {
-                                                                Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
-                                                            }
-                                                            if (!$global:posterurl) {
-                                                                Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                $global:IsFallback = $true
+                                                                if ($ArtUrl) {
+                                                                    GetPlexArtwork -Type ": $global:show_name 'Season $global:season_number - Episode $global:episodenumber' Title Card" -ArtUrl $ArtUrl -TempImage $EpisodeImage
+                                                                }
+                                                                Else {
+                                                                    Write-Entry -Subtext "Plex TitleCard Url empty, cannot search on plex, likely there is no artwork on plex..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Yellow -log Warning
+                                                                }
+                                                                if (!$global:posterurl) {
+                                                                    Write-Entry -Subtext "Could not find a TitleCard on any site" -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Red -log Error
+                                                                }
                                                             }
                                                         }
                                                     }
                                                 }
                                             }
-                                            if ($global:posterurl -or $global:PlexartworkDownloaded -or $TakeLocal) {
+                                            if ($global:posterurl -or $global:PlexartworkDownloaded -or $TakeLocal -or $global:TempImagecopied -eq 'true') {
                                                 if ($global:ImageProcessing -eq 'true') {
                                                     if ($TakeLocal) {
                                                         Get-ChildItem -LiteralPath "$($ManualTestPath)$posterext" | ForEach-Object {
@@ -21366,6 +21485,7 @@ else {
                                                             }
                                                         }
                                                         Else {
+                                                            Write-Entry -Subtext "Taking temp image..." -Path $global:ScriptRoot\Logs\Scriptlog.log -Color Green -log Info
                                                             Copy-Item -LiteralPath $EpisodeTempImage -destination $EpisodeImage | Out-Null
                                                         }
                                                     }

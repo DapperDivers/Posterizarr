@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## [1.9.57](https://github.com/fscorrupt/Posterizarr/releases/tag/1.9.57) - 2025-04-25 05:43:38+00:00
+
+## [1.9.56](https://github.com/fscorrupt/Posterizarr/releases/tag/1.9.56) - 2025-04-24 10:02:24+00:00
+
+## [1.9.55](https://github.com/fscorrupt/Posterizarr/releases/tag/1.9.55) - 2025-04-22 07:13:23+00:00
+
+## [1.9.54](https://github.com/fscorrupt/Posterizarr/releases/tag/1.9.54) - 2025-04-21 16:52:57+00:00
+
+## [1.9.53](https://github.com/fscorrupt/Posterizarr/releases/tag/1.9.53) - 2025-04-21 16:37:16+00:00
+
+## [1.9.52](https://github.com/fscorrupt/Posterizarr/releases/tag/1.9.52) - 2025-04-16 11:07:44+00:00
+
+## [1.9.51](https://github.com/fscorrupt/Posterizarr/releases/tag/1.9.51) - 2025-04-15 12:00:29+00:00
+
 ## [1.9.50](https://github.com/fscorrupt/Posterizarr/releases/tag/1.9.50) - 2025-04-14 12:45:06+00:00
 
 ## [1.9.49](https://github.com/fscorrupt/Posterizarr/releases/tag/1.9.49) - 2025-04-14 12:33:05+00:00

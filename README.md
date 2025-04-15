@@ -471,7 +471,7 @@ libraries:
 ```
 ### Manual Assets Naming
 > [!IMPORTANT]
-> Naming must follow this rule; otherwise, the asset will not be picked up.
+> Naming must follow these rules, including proper case sensitivity (uppercase and lowercase) in file/folder names; otherwise, the asset will not be picked up.
 
 If you have Library Folders set to `true`, it will look like this:
 | **Asset**                      | **Naming**                                                                                                                                                                                                                                                                                  |
@@ -700,6 +700,9 @@ On [docker](#docker) this way:
 ```sh
   docker exec -it posterizarr pwsh /app/Posterizarr.ps1 -PosterReset -LibraryToReset "Test Lib"
 ```
+> [!TIP]
+> Note: This operation **does not delete** any artwork. It simply sets each item's poster to the first available poster from Plex’s metadata. This action cannot be undone, so proceed with caution.
+
 
 ### Sync Modes
 > [!IMPORTANT]
@@ -738,9 +741,10 @@ On [docker](#docker) this way:
   - Change `RUN_TIME` in yaml to your needs **- You need to use 24H Time Format**
     - The Script gets executed on the Times you specified
     - Before starting the scheduled run it checks if another Posterizarr process is running, if yes - the scheduled run will be skipped.
+    - If set to `disabled`, the script will **not** run on a schedule but will still watch for file triggers and respond to manual triggers.
   - Change `volume` and `network` to fit your environment (Make sure you have the same network as your plex container when you use local IP of plex)
   - Change `TimeZone` to yours, otherwise it will get scheduled to a different time you may want it to.
-  - You may also have to change `PUID/PGID`
+  - You may also have to change `user: "1000:1000"` (PUID/PGID)
 
   If you manually want to run the Script you can do it this way:
 
@@ -768,6 +772,10 @@ On [docker](#docker) this way:
   ```sh
   docker exec -it posterizarr pwsh /app/Posterizarr.ps1 -SyncEmby
   ```
+  **Poster reset Mode:**
+  ```sh
+  docker exec -it posterizarr pwsh /app/Posterizarr.ps1 -PosterReset -LibraryToReset "Test Lib"
+  ```
 > [!TIP]
 > If you did not used `pwsh` on docker exec you can do it this way.
 >
@@ -779,6 +787,7 @@ On [docker](#docker) this way:
 > pwsh /app/Posterizarr.ps1 -Backup
 > pwsh /app/Posterizarr.ps1 -SyncEmby
 > pwsh /app/Posterizarr.ps1 -SyncJelly
+>pwsh /app/Posterizarr.ps1 -PosterReset -LibraryToReset "Test Lib"
 > ```
 
 ### unRAID
